@@ -1,26 +1,37 @@
 # Atlassian MCP for Copilot
 
-A policy-controlled **MCP server for Jira and Confluence Cloud and Data Center / Server**. Each product has
-its own site URL and credentials. Jira Cloud supports standard and scoped API tokens with account-email
-authentication and REST API v3; Confluence Cloud supports standard and scoped API tokens with
-account-email authentication and REST API v1. OAuth is not implemented.
+A policy-controlled **Model Context Protocol (MCP) server for Jira and Confluence Cloud and Data Center / Server**.
+It connects Copilot and other compatible MCP clients to Atlassian through the standard MCP tool interface.
+Use the VS Code extension for guided setup and direct editor integration, or run the Python server with stdio
+or Streamable HTTP transport.
 
-## Atlassian MCP for Copilot and mcp-atlassian
+Jira and Confluence use separate site URLs and credentials. Jira Cloud supports standard and scoped API tokens
+with account-email authentication and REST API v3; Confluence Cloud supports standard and scoped API tokens
+with account-email authentication and REST API v1. Data Center / Server uses personal access tokens (PATs).
+OAuth is not implemented.
 
-This is a capability and control comparison, not a claim that either project is universally more secure.
-mcp-atlassian's tool count and defaults below refer to its current public documentation/source; installed
-versions may differ.
+## What this application provides
 
-| | mcp-atlassian | Atlassian MCP for Copilot |
-|---|---|---|
-| Product/tool breadth | 98 documented Jira and Confluence tools; Jira and Confluence Cloud and Server/Data Center | Core Jira operations plus Confluence search/read, pages, comments, and bounded attachment upload/download |
-| Tool selection | `TOOLSETS` and `ENABLED_TOOLS`; current source filters both listing and direct tool calls. Unset `TOOLSETS` currently enables all toolsets. | Admin-selected `MCP_TOOL_GROUPS`; operations are listed on demand and checked when called |
-| Write safety | `READ_ONLY_MODE` can block writes. Reviewed write guard checks read-only mode; it is not an interactive approval step. | Read-only by default; in `elicit` mode, the server shows a change preview and requires user approval. Explicit `client` mode trusts the calling app instead. |
-| Authentication | Cloud API token and OAuth; Server/DC PAT and mTLS; supports per-request credentials in HTTP mode | Cloud API token and Server/DC PAT; OAuth and mTLS are not implemented |
-| URL/SSRF controls | URL validation and DNS-pinned outbound connections; request-supplied domains can be restricted with `MCP_ALLOWED_URL_DOMAINS` | HTTPS-origin allowlist (including port), strict API paths, same-origin attachment fetch, redirects refused, DNS resolve/validate/connect pinning; private IPs are accepted only for the exact configured Jira or Confluence hostname, while loopback, link-local, and metadata IPs stay blocked |
-| Remote transport | HTTP listener can use TLS; deployments must configure their transport and host protections | Remote binds require built-in TLS and `MCP_HTTP_ALLOWED_HOSTS`; optional mTLS requires a trusted client CA |
-| Attachments | Broader Jira/Confluence attachment tools, including uploads; remote file paths are confined to a configured directory | Jira text attachment reads; Confluence uploads/downloads are base64-only, same-site, size-limited; no arbitrary server file paths |
-| Change audit | The reviewed docs/source do not establish an equivalent per-change audit record | JSONL metadata for each change attempt; no argument values or provider error text |
+- **MCP-native integration:** Uses the Python MCP SDK and supports stdio for locally managed clients and
+  Streamable HTTP for HTTP deployments. The VS Code extension verifies credentials, stores them in VS Code
+  SecretStorage, and lets VS Code manage the server process.
+- **Controlled capabilities:** Administrators choose enabled tool groups. The server starts read-only by
+  default, validates operation arguments, and checks policy at execution time—not just when tools are listed.
+- **Human-confirmed changes:** In the default `elicit` mode, the server presents a preview and requires an
+  explicit user decision before a change runs. If the client cannot show the approval prompt, changes are
+  refused. Read-only mode and disabled tool groups remain enforced by the server.
+- **Hardened outbound requests:** HTTPS origins and API paths are constrained, redirects are refused, and
+  direct connections validate and pin resolved addresses. Private addresses are allowed only for the exact
+  configured service hostname; loopback, link-local, and cloud-metadata addresses remain blocked.
+- **Bounded data handling:** Search and listing results can be limited, issue details can be selected by
+  section, and attachment handling has size and content constraints. The server does not expose arbitrary
+  filesystem access.
+- **Operational visibility:** Rate limits and a JSONL change-attempt audit are available. Audit entries record
+  metadata without tool argument values or provider error text.
+
+These are application design features, not a guarantee of security under every deployment. Keep credentials
+private, configure only the required tool groups, and use the network and transport controls appropriate to
+your environment.
 
 ## How it works
 
@@ -36,7 +47,26 @@ secure-jira-mcp ── policy check ── strict argument check ── rate lim
    └── optional Confluence REST API (independent allowed HTTPS origin and credentials, no redirects)
 ```
 
-### Tools the model always sees
+### Security and approval flow
+
+1. **The administrator configures the boundary.** Environment settings select the Jira and optional
+   Confluence sites, enabled tool groups, read-only mode, allowed hosts/networks, and rate limits.
+2. **The client supplies or selects credentials.** In stdio mode, credentials come from server settings. In
+   HTTP mode, each request supplies credentials in headers; the server validates the requested site against
+   its configured origin policy.
+3. **The server validates each operation.** It checks the operation group, arguments, and write policy before
+   making an Atlassian request. Outbound requests use HTTPS, reject redirects, and apply DNS/IP protections.
+4. **Changes require a separate approval step.** The server shows the proposed effect and proceeds only after
+   approval. The approval is not supplied as a normal tool argument. `MCP_CONFIRMATION_MODE=client` is an
+   explicit alternative for clients that already provide their own approval gate.
+5. **The attempt is audited.** The JSONL audit records the operation outcome and metadata without storing
+   argument values or provider error text.
+
+For remote HTTP deployments, the server refuses a non-loopback listener unless remote access is explicitly
+enabled, TLS is configured, and allowed hosts are set. Optional mTLS authenticates clients to this MCP server;
+it does not authenticate the server to Jira or Confluence.
+
+### Core tools
 
 | Tool | Purpose |
 |---|---|
@@ -55,9 +85,29 @@ When a Confluence URL is configured, the server also exposes `search_confluence_
 Confluence page/comment bodies are accepted as plain text and escaped into storage format; attachment bytes are
 passed as base64 and capped by `MCP_MAX_ATTACHMENT_BYTES`.
 
-The MCP server instructions ask compatible clients to call Jira and Confluence tools directly rather than search
-source code or delegate to subagents. For a live connection check, call `list_projects` for Jira or
-`list_confluence_spaces` for Confluence. The client ultimately controls tool selection and delegation.
+### Token-efficient tool and result design
+
+The server is designed to keep model context focused by not exposing every operation schema for every request:
+
+- The core Jira tools are always available. `list_operations()` first returns the enabled groups; the client
+  can then call `list_operations(group)` to retrieve schemas for just the relevant group.
+- Operations are invoked through the shared `run_read` and `run_change` tools, rather than exposing every
+  operation as a separate tool with its own schema on every request. Confluence change schemas are discovered
+  separately with `list_confluence_operations`.
+- Jira search returns compact rows and handles pagination on the server. `get_issue` returns a useful default
+  set of sections, while callers can request specific sections or fields when they need less or more detail.
+  Confluence search and listing tools use capped pages.
+
+This can reduce **model context tokens** spent on tool definitions and unnecessary response data. It does not
+change Atlassian API-token authentication, and it does not guarantee a fixed token count or percentage saving:
+the result depends on the model, client, task, and requested data. Large result sets or detailed issue history
+can still produce large responses. The shared `run_read`/`run_change` interface also means a client may need an
+extra discovery call before using a less common operation; that is the trade-off for exposing fewer schemas up
+front.
+
+For a connection check, call `list_projects` for Jira or `list_confluence_spaces` for Confluence. Use the MCP
+tools directly for Jira and Confluence work; tool availability and selection are ultimately controlled by the
+MCP client.
 
 ### Operation groups
 
@@ -89,24 +139,24 @@ source code or delegate to subagents. For a live connection check, call `list_pr
 ### Confirmation modes
 
 - `MCP_CONFIRMATION_MODE=elicit` (default): the server asks the user through **MCP elicitation**. The approval is not a tool argument, so the model cannot fill it in. A client that cannot show the prompt cannot make changes at all.
-- `MCP_CONFIRMATION_MODE=client`: for an app that already has its own approval step (for example the Troubleshooting Agent's Approve/Reject gate). The server then runs a change when it is called, still with policy, validation and audit.
+- `MCP_CONFIRMATION_MODE=client`: for a client that already has its own approval step. The server then runs a change when it is called, still with policy, validation and audit.
 
 ## Install
 
 Requires Python 3.11+.
 
 ```powershell
-cd "C:\Agentic AI\secure-jira-mcp"
+cd "C:\path\to\atlassian-mcp-for-copilot"
 python -m venv .venv
 .venv\Scripts\python -m pip install -e .
 Copy-Item .env.example .env
 ```
 
-Behind Zscaler or a similar proxy, set `$env:HTTPS_PROXY="http://127.0.0.1:9000"` before `pip install`.
+Behind a corporate HTTPS proxy, set `$env:HTTPS_PROXY="http://127.0.0.1:9000"` before `pip install`.
 
 ## Configure (`.env`)
 
-1. `JIRA_URL=https://jira.company.com`
+1. `JIRA_URL=https://jira.example.com`
 2. Set `JIRA_DEPLOYMENT=data_center` and `JIRA_PERSONAL_TOKEN=` for a Data Center / Server PAT, or
    `JIRA_DEPLOYMENT=cloud`, `JIRA_USERNAME=` (your Atlassian account email), and `JIRA_API_TOKEN=` for Jira Cloud.
    The Cloud API token must belong to that account email. Set `JIRA_API_TOKEN_SCOPED=true` for a token created
@@ -139,7 +189,7 @@ origin, including a non-standard port, must be in `CONFLUENCE_ALLOWED_HOSTS`).
 For a remote listener, configure the expected host and use built-in TLS:
 
 ```powershell
-$env:MCP_HTTP_ALLOWED_HOSTS = "mcp.company.com:9200"
+$env:MCP_HTTP_ALLOWED_HOSTS = "mcp.example.com:9200"
 .venv\Scripts\secure-jira-mcp --transport http --host 0.0.0.0 --port 9200 --allow-remote `
   --tls-certfile .\server.pem --tls-keyfile .\server.key --mtls-ca-file .\client-ca.pem --env-file .env
 ```
@@ -162,8 +212,8 @@ The following is the manual setup; use one method or the other.
   "servers": {
     "secure-jira": {
       "type": "stdio",
-      "command": "C:\\Agentic AI\\secure-jira-mcp\\.venv\\Scripts\\secure-jira-mcp.exe",
-      "args": ["--transport", "stdio", "--env-file", "C:\\Agentic AI\\secure-jira-mcp\\.env"]
+      "command": "C:\\path\\to\\atlassian-mcp-for-copilot\\.venv\\Scripts\\secure-jira-mcp.exe",
+      "args": ["--transport", "stdio", "--env-file", "C:\\path\\to\\atlassian-mcp-for-copilot\\.env"]
     }
   }
 }
@@ -195,11 +245,11 @@ server's approval prompt in the terminal.
 
 ```powershell
 .venv\Scripts\python examples\try_it.py projects
-.venv\Scripts\python examples\try_it.py search "project = GHP AND issuetype = Story ORDER BY updated DESC"
-.venv\Scripts\python examples\try_it.py issue GHP-3213
+.venv\Scripts\python examples\try_it.py search "project = PROJ AND issuetype = Story ORDER BY updated DESC"
+.venv\Scripts\python examples\try_it.py issue PROJ-123
 .venv\Scripts\python examples\try_it.py ops agile
-.venv\Scripts\python examples\try_it.py read list_boards "{\"project_key\": \"GHP\"}"
-.venv\Scripts\python examples\try_it.py comment GHP-1234 "Test comment"
+.venv\Scripts\python examples\try_it.py read list_boards "{\"project_key\": \"PROJ\"}"
+.venv\Scripts\python examples\try_it.py comment PROJ-123 "Test comment"
 ```
 
 ## Test
@@ -220,8 +270,8 @@ attachment bounds. These tests do not replace validation against real Atlassian 
 `MCP_AUDIT_LOG` (default `audit.jsonl`) gets one line per change attempt. It records operation metadata only—no tool arguments, argument hashes, or provider error text:
 
 ```json
-{"time": "...", "user": "<hash of site+token>", "site": "https://jira.company.com", "operation": "add_comment",
- "target": "GHP-3213", "outcome": "done|declined|failed", "argument_count": 2}
+{"time": "...", "user": "<hash of site+token>", "site": "https://jira.example.com", "operation": "add_comment",
+ "target": "PROJ-123", "outcome": "done|declined|failed", "argument_count": 2}
 ```
 
 ## Limits
