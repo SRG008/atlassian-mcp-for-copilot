@@ -1,8 +1,8 @@
 {
-  "name": "secure-jira-mcp",
+  "name": "atlassian-mcp-for-copilot",
   "displayName": "Atlassian MCP for Copilot",
   "description": "Connect Jira and Confluence Cloud, Data Center, and Server to Copilot in VS Code.",
-  "version": "0.1.26",
+  "version": "0.1.0",
   "publisher": "188453f9-05fa-6923-b85a-86b2837401cb",
   "engines": {
     "vscode": "^1.101.0"
