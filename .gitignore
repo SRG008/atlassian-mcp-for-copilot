@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+audit.jsonl
+vscode-extension/node_modules/
+vscode-extension/dist/
+vscode-extension/server/
+vscode-extension/*.vsix

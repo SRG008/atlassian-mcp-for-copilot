@@ -1,0 +1,7 @@
+**
+!package.json
+!README.md
+!dist/*.js
+!server/pyproject.toml
+!server/README.md
+!server/src/secure_jira_mcp/*.py

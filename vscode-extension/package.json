@@ -1,0 +1,78 @@
+{
+  "name": "secure-jira-mcp",
+  "displayName": "Atlassian MCP for Copilot",
+  "description": "Connect Jira and Confluence Cloud, Data Center, and Server to Copilot in VS Code.",
+  "version": "0.1.26",
+  "publisher": "188453f9-05fa-6923-b85a-86b2837401cb",
+  "engines": {
+    "vscode": "^1.101.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "jira",
+    "confluence",
+    "mcp",
+    "copilot",
+    "data center",
+    "cloud"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "secureJiraMcp.connect",
+        "title": "Atlassian MCP for Copilot: Connect"
+      }
+    ],
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "secureJiraMcp",
+        "label": "Atlassian MCP for Copilot"
+      }
+    ],
+    "configuration": {
+      "title": "Atlassian MCP for Copilot",
+      "properties": {
+        "secureJiraMcp.allowWrites": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "description": "Allow Jira and Confluence changes after the server asks for confirmation. Off by default."
+        },
+        "secureJiraMcp.allowedNetworks": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "description": "Comma-separated CIDRs allowed for private Jira or Confluence IPs, e.g. 10.20.0.0/16. Leave empty for public sites."
+        },
+        "secureJiraMcp.trustHttpsProxy": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "description": "Trust the HTTPS proxy to resolve and restrict Jira and Confluence destinations. Enable only for a trusted, access-controlled proxy."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "bundle-server": "node scripts/bundle-server.cjs",
+    "build": "npm run compile && npm run bundle-server",
+    "test": "npm run compile && node --test tests/*.test.cjs",
+    "vscode:prepublish": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "~1.101.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.9.0"
+  }
+}
